@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  ADMIN
+  STAFF
+}
+
+enum Status {
+  PENDING
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model User {
+  id             String    @id @default(cuid())
+  name           String
+  email          String    @unique
+  password       String
+  role           Role      @default(STUDENT)
+  createdAt      DateTime  @default(now())
+  issuesReported Issue[]   @relation("ReportedBy")
+  issuesAssigned Issue[]   @relation("AssignedTo")
+  comments       Comment[]
+}
+
+model Issue {
+  id           String    @id @default(cuid())
+  title        String
+  description  String
+  imageUrl     String?
+  location     String?
+  status       Status    @default(PENDING)
+  reportedById String
+  reportedBy   User      @relation("ReportedBy", fields: [reportedById], references: [id])
+  assignedToId String?
+  assignedTo   User?     @relation("AssignedTo", fields: [assignedToId], references: [id])
+  comments     Comment[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  text      String
+  issueId   String
+  issue     Issue    @relation(fields: [issueId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Resource {
+  id        String   @id @default(cuid())
+  name      String
+  type      String
+  location  String
+  quantity  Int      @default(1)
+  condition String   @default("GOOD")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
