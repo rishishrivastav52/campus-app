@@ -70,8 +70,9 @@ enum RequestStatus {
 
 model ResourceRequest {
   id         String        @id @default(cuid())
-  resourceId String
-  resource   Resource      @relation(fields: [resourceId], references: [id])
+  resourceId String?
+  resource   Resource?     @relation(fields: [resourceId], references: [id])
+  customName String?
   studentId  String
   student    User          @relation(fields: [studentId], references: [id])
   quantity   Int

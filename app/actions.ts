@@ -135,11 +135,20 @@ export async function requestResource(formData: FormData) {
   if (!session || session.role !== "STUDENT") throw new Error("Only students can request resources.");
 
   const resourceId = String(formData.get("resourceId") || "");
+  const customName = String(formData.get("customName") || "").trim();
   const quantity = parseInt(String(formData.get("quantity") || "1"), 10) || 1;
-  if (!resourceId || quantity < 1) throw new Error("Resource and a valid quantity are required.");
+  if ((!resourceId && !customName) || quantity < 1) {
+    throw new Error("Pick a resource or name one, plus a valid quantity.");
+  }
 
   await prisma.resourceRequest.create({
-    data: { resourceId, studentId: session.id, quantity, status: "PENDING" },
+    data: {
+      resourceId: resourceId || null,
+      customName: resourceId ? null : customName,
+      studentId: session.id,
+      quantity,
+      status: "PENDING",
+    },
   });
 
   revalidatePath("/dashboard");
@@ -186,6 +195,52 @@ export async function confirmReturn(formData: FormData) {
 
   const requestId = String(formData.get("requestId") || "");
   await prisma.resourceRequest.update({ where: { id: requestId }, data: { status: "RETURNED" } });
+  revalidatePath("/dashboard");
+}
+
+// ---------------------------------------------------------------------------
+// 9. REMOVE STAFF — Admin removes a staff account (unassigns their issues first)
+// ---------------------------------------------------------------------------
+export async function removeStaff(formData: FormData) {
+  const session = getSession();
+  if (!session || session.role !== "ADMIN") throw new Error("Only admins can remove staff.");
+
+  const staffId = String(formData.get("staffId") || "");
+  if (!staffId) throw new Error("Staff id is required.");
+
+  await prisma.$transaction([
+    prisma.issue.updateMany({
+      where: { assignedToId: staffId },
+      data: { assignedToId: null, status: "PENDING" },
+    }),
+    prisma.comment.deleteMany({ where: { userId: staffId } }),
+    prisma.user.delete({ where: { id: staffId, role: "STAFF" } }),
+  ]);
+
+  revalidatePath("/dashboard");
+}
+
+// ---------------------------------------------------------------------------
+// 10. CLOSE ISSUE — Admin closes a resolved issue for good
+// ---------------------------------------------------------------------------
+export async function closeIssue(formData: FormData) {
+  const session = getSession();
+  if (!session || session.role !== "ADMIN") throw new Error("Only admins can close issues.");
+
+  const issueId = String(formData.get("issueId") || "");
+  await prisma.issue.update({ where: { id: issueId, status: "RESOLVED" }, data: { status: "CLOSED" } });
+  revalidatePath("/dashboard");
+}
+
+// ---------------------------------------------------------------------------
+// 11. CANCEL RESOURCE REQUEST — Student cancels their own still-pending request
+// ---------------------------------------------------------------------------
+export async function cancelResourceRequest(formData: FormData) {
+  const session = getSession();
+  if (!session || session.role !== "STUDENT") throw new Error("Only students can cancel their own requests.");
+
+  const requestId = String(formData.get("requestId") || "");
+  await prisma.resourceRequest.delete({ where: { id: requestId, studentId: session.id, status: "PENDING" } });
   revalidatePath("/dashboard");
 }
 
