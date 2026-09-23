@@ -1,0 +1,11 @@
+{
+  "remoteName": "origin",
+  "projects": [
+    {
+      "id": "prj_03PGDJ0UjGmo9vzYLmBb0Kj5PO3R",
+      "name": "campus-app",
+      "directory": ".",
+      "orgId": "team_MUJZ3lJ14PvgzYyMo465Svzc"
+    }
+  ]
+}

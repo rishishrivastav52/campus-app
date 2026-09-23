@@ -31,6 +31,7 @@ model User {
   issuesReported Issue[]   @relation("ReportedBy")
   issuesAssigned Issue[]   @relation("AssignedTo")
   comments       Comment[]
+  resourceRequests ResourceRequest[]
 }
 
 model Issue {
@@ -59,13 +60,34 @@ model Comment {
   createdAt DateTime @default(now())
 }
 
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  RETURN_REQUESTED
+  RETURNED
+}
+
+model ResourceRequest {
+  id         String        @id @default(cuid())
+  resourceId String
+  resource   Resource      @relation(fields: [resourceId], references: [id])
+  studentId  String
+  student    User          @relation(fields: [studentId], references: [id])
+  quantity   Int
+  status     RequestStatus @default(PENDING)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+}
+
 model Resource {
-  id        String   @id @default(cuid())
+  id        String            @id @default(cuid())
   name      String
   type      String
   location  String
-  quantity  Int      @default(1)
-  condition String   @default("GOOD")
+  quantity  Int               @default(1)
+  condition String            @default("GOOD")
+  requests  ResourceRequest[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
