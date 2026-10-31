@@ -39,6 +39,7 @@ model Issue {
   title        String
   description  String
   imageUrl     String?
+  urgent       Boolean   @default(false)
   location     String?
   status       Status    @default(PENDING)
   reportedById String
@@ -73,6 +74,7 @@ model ResourceRequest {
   resourceId String?
   resource   Resource?     @relation(fields: [resourceId], references: [id])
   customName String?
+  urgent     Boolean       @default(false)
   studentId  String
   student    User          @relation(fields: [studentId], references: [id])
   quantity   Int

@@ -24,6 +24,7 @@ export async function createIssue(formData: FormData) {
       description,
       location: location || null,
       imageUrl: imageUrl || null,
+      urgent: formData.get("urgent") === "on",
       reportedById: session.id,
       status: "PENDING",
     },
@@ -146,6 +147,7 @@ export async function requestResource(formData: FormData) {
       resourceId: resourceId || null,
       customName: resourceId ? null : customName,
       studentId: session.id,
+      urgent: formData.get("urgent") === "on",
       quantity,
       status: "PENDING",
     },
@@ -167,7 +169,19 @@ export async function reviewResourceRequest(formData: FormData) {
     throw new Error("A valid decision is required.");
   }
 
-  await prisma.resourceRequest.update({ where: { id: requestId }, data: { status: decision } });
+  const req = await prisma.resourceRequest.findUnique({ where: { id: requestId }, include: { resource: true } });
+  if (!req || req.status !== "PENDING") return;
+
+  if (decision === "APPROVED" && req.resourceId && req.resource) {
+    // Not enough stock -> leave the request pending instead of approving it.
+    if (req.resource.quantity < req.quantity) return;
+    await prisma.$transaction([
+      prisma.resource.update({ where: { id: req.resourceId }, data: { quantity: { decrement: req.quantity } } }),
+      prisma.resourceRequest.update({ where: { id: requestId }, data: { status: "APPROVED" } }),
+    ]);
+  } else {
+    await prisma.resourceRequest.update({ where: { id: requestId }, data: { status: decision } });
+  }
   revalidatePath("/dashboard");
 }
 
@@ -194,7 +208,15 @@ export async function confirmReturn(formData: FormData) {
   if (!session || session.role !== "ADMIN") throw new Error("Only admins can confirm returns.");
 
   const requestId = String(formData.get("requestId") || "");
-  await prisma.resourceRequest.update({ where: { id: requestId }, data: { status: "RETURNED" } });
+  const req = await prisma.resourceRequest.findUnique({ where: { id: requestId } });
+  if (!req || req.status !== "RETURN_REQUESTED") return;
+
+  await prisma.$transaction([
+    prisma.resourceRequest.update({ where: { id: requestId }, data: { status: "RETURNED" } }),
+    ...(req.resourceId
+      ? [prisma.resource.update({ where: { id: req.resourceId }, data: { quantity: { increment: req.quantity } } })]
+      : []),
+  ]);
   revalidatePath("/dashboard");
 }
 
@@ -241,6 +263,38 @@ export async function cancelResourceRequest(formData: FormData) {
 
   const requestId = String(formData.get("requestId") || "");
   await prisma.resourceRequest.delete({ where: { id: requestId, studentId: session.id, status: "PENDING" } });
+  revalidatePath("/dashboard");
+}
+
+// ---------------------------------------------------------------------------
+// 12. DELETE RESOURCE — Admin deletes a resource that has no request history
+// ---------------------------------------------------------------------------
+export async function deleteResource(formData: FormData) {
+  const session = getSession();
+  if (!session || session.role !== "ADMIN") throw new Error("Only admins can delete resources.");
+
+  const id = String(formData.get("id") || "");
+  if (!id) return;
+  const used = await prisma.resourceRequest.count({ where: { resourceId: id } });
+  if (used > 0) return; // keep history intact; resource is in use
+  await prisma.resource.delete({ where: { id } });
+  revalidatePath("/dashboard");
+}
+
+// ---------------------------------------------------------------------------
+// 13. WITHDRAW ISSUE — Student withdraws their own still-pending issue
+// ---------------------------------------------------------------------------
+export async function withdrawIssue(formData: FormData) {
+  const session = getSession();
+  if (!session || session.role !== "STUDENT") throw new Error("Only students can withdraw their issues.");
+
+  const issueId = String(formData.get("issueId") || "");
+  const issue = await prisma.issue.findFirst({ where: { id: issueId, reportedById: session.id, status: "PENDING" } });
+  if (!issue) return;
+  await prisma.$transaction([
+    prisma.comment.deleteMany({ where: { issueId } }),
+    prisma.issue.delete({ where: { id: issueId } }),
+  ]);
   revalidatePath("/dashboard");
 }
 

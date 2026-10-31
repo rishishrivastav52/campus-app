@@ -30,9 +30,11 @@ import {
   removeStaff,
   closeIssue,
   cancelResourceRequest,
+  deleteResource,
+  withdrawIssue,
   logout,
 } from "@/app/actions";
-import { UserX, XCircle } from "lucide-react";
+import { UserX, XCircle, Trash2 } from "lucide-react";
 
 const STATUS_STYLES: Record<string, string> = {
   PENDING: "bg-amber-100 text-amber-700",
@@ -97,6 +99,22 @@ function Header({ name, role }: { name: string; role: string }) {
         </div>
       </div>
     </header>
+  );
+}
+
+function UrgentBadge() {
+  return (
+    <span className="badge bg-red-600 text-white mr-2 gap-1">
+      <AlertTriangle size={12} /> URGENT
+    </span>
+  );
+}
+
+function UrgentCheck({ label }: { label: string }) {
+  return (
+    <label className="flex items-center gap-2 text-sm text-red-600 font-medium cursor-pointer">
+      <input type="checkbox" name="urgent" className="accent-red-600" /> {label}
+    </label>
   );
 }
 
@@ -172,13 +190,13 @@ async function StudentHub({ userId, statusFilter }: { userId: string; statusFilt
   const [issues, resources, myRequests] = await Promise.all([
     prisma.issue.findMany({
       where: { reportedById: userId, ...(statusFilter ? { status: statusFilter as any } : {}) },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ urgent: "desc" }, { createdAt: "desc" }],
       include: { assignedTo: true, comments: { include: { user: true }, orderBy: { createdAt: "asc" } } },
     }),
     prisma.resource.findMany({ orderBy: { createdAt: "desc" } }),
     prisma.resourceRequest.findMany({
       where: { studentId: userId },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ urgent: "desc" }, { createdAt: "desc" }],
       include: { resource: true },
     }),
   ]);
@@ -194,6 +212,7 @@ async function StudentHub({ userId, statusFilter }: { userId: string; statusFilt
           <textarea name="description" className="input" placeholder="Describe the issue" rows={3} required />
           <input name="location" className="input" placeholder="Location (e.g. Block A, Room 101)" />
           <input name="imageUrl" className="input" placeholder="Image URL (optional)" />
+          <UrgentCheck label="Urgent — I need immediate assistance" />
           <button className="btn-primary w-full">Submit Issue</button>
         </form>
       </div>
@@ -205,15 +224,23 @@ async function StudentHub({ userId, statusFilter }: { userId: string; statusFilt
         <StatusFilterBar current={statusFilter} />
         {issues.length === 0 && <p className="text-sm text-gray-500">No issues found for this filter.</p>}
         {issues.map((issue) => (
-          <div key={issue.id} className="card">
+          <div key={issue.id} className={`card ${issue.urgent ? "border-red-500 bg-red-50" : ""}`}>
             <div className="flex items-start justify-between gap-2">
-              <h3 className="font-medium">{issue.title}</h3>
+              <h3 className="font-medium">{issue.urgent && <UrgentBadge />}{issue.title}</h3>
               <StatusBadge status={issue.status} />
             </div>
             <p className="text-sm text-gray-600 mt-1">{issue.description}</p>
             {issue.location && <p className="text-xs text-gray-400 mt-1">📍 {issue.location}</p>}
             {issue.assignedTo && (
               <p className="text-xs text-gray-500 mt-1">Assigned to {issue.assignedTo.name}</p>
+            )}
+            {issue.status === "PENDING" && (
+              <form action={withdrawIssue} className="mt-2">
+                <input type="hidden" name="issueId" value={issue.id} />
+                <button className="text-xs text-red-600 flex items-center gap-1">
+                  <XCircle size={13} /> Withdraw issue
+                </button>
+              </form>
             )}
             <CommentTrail comments={issue.comments} />
           </div>
@@ -232,6 +259,7 @@ async function StudentHub({ userId, statusFilter }: { userId: string; statusFilt
             ))}
           </select>
           <input name="customName" className="input" placeholder="Not in stock? Type the item name instead" />
+          <UrgentCheck label="Urgent request" />
           <div className="flex items-center gap-2">
             <input name="quantity" type="number" min={1} defaultValue={1} className="input w-20" />
             <button className="btn-primary shrink-0">Request</button>
@@ -242,10 +270,10 @@ async function StudentHub({ userId, statusFilter }: { userId: string; statusFilt
         {myRequests.length === 0 && <p className="text-sm text-gray-500">No resource requests yet.</p>}
         <div className="space-y-2">
           {myRequests.map((req) => (
-            <div key={req.id} className="border rounded-lg px-3 py-2">
+            <div key={req.id} className={`border rounded-lg px-3 py-2 ${req.urgent ? "border-red-500 bg-red-50" : ""}`}>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-medium">
-                  {req.resource?.name || `${req.customName} (not in stock)`} × {req.quantity}
+                  {req.urgent && <UrgentBadge />}{req.resource?.name || `${req.customName} (not in stock)`} × {req.quantity}
                 </span>
                 <ReqBadge status={req.status} />
               </div>
@@ -284,7 +312,7 @@ async function AdminBoard({ statusFilter }: { statusFilter?: string }) {
   const [issues, staffMembers, resources, counts, resourceRequests] = await Promise.all([
     prisma.issue.findMany({
       where: statusFilter ? { status: statusFilter as any } : undefined,
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ urgent: "desc" }, { createdAt: "desc" }],
       include: {
         reportedBy: true,
         assignedTo: true,
@@ -297,16 +325,26 @@ async function AdminBoard({ statusFilter }: { statusFilter?: string }) {
       ALL_STATUSES.map((s) => prisma.issue.count({ where: { status: s as any } }))
     ),
     prisma.resourceRequest.findMany({
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ urgent: "desc" }, { createdAt: "desc" }],
       include: { student: true, resource: true },
     }),
   ]);
 
   const [pending, assigned, inProgress, resolved, closed] = counts;
+  const urgentIssues = await prisma.issue.count({
+    where: { urgent: true, status: { in: ["PENDING", "ASSIGNED", "IN_PROGRESS"] } },
+  });
+  const urgentReqs = resourceRequests.filter((r) => r.urgent && r.status === "PENDING").length;
 
   return (
     <div className="space-y-8">
       <section>
+        {urgentIssues + urgentReqs > 0 && (
+          <div className="rounded-xl border border-red-500 bg-red-50 text-red-700 px-4 py-3 mb-4 text-sm font-medium flex items-center gap-2">
+            <AlertTriangle size={18} />
+            {urgentIssues} urgent issue(s) and {urgentReqs} urgent resource request(s) need attention.
+          </div>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
           <StatCard label="Pending" value={pending} icon={<AlertTriangle size={18} className="text-amber-600" />} tone="bg-amber-50" />
           <StatCard label="Assigned" value={assigned} icon={<Clock size={18} className="text-blue-600" />} tone="bg-blue-50" />
@@ -322,10 +360,10 @@ async function AdminBoard({ statusFilter }: { statusFilter?: string }) {
         <div className="space-y-3">
           {issues.length === 0 && <p className="text-sm text-gray-500">No issues found for this filter.</p>}
           {issues.map((issue) => (
-            <div key={issue.id} className="card">
+            <div key={issue.id} className={`card ${issue.urgent ? "border-red-500 bg-red-50" : ""}`}>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <h3 className="font-medium">{issue.title}</h3>
+                  <h3 className="font-medium">{issue.urgent && <UrgentBadge />}{issue.title}</h3>
                   <p className="text-xs text-gray-500 mt-0.5">Reported by {issue.reportedBy.name}</p>
                 </div>
                 <StatusBadge status={issue.status} />
@@ -414,6 +452,7 @@ async function AdminBoard({ statusFilter }: { statusFilter?: string }) {
                   <th className="px-4 py-2">Location</th>
                   <th className="px-4 py-2">Qty</th>
                   <th className="px-4 py-2">Condition</th>
+                  <th className="px-4 py-2"></th>
                 </tr>
               </thead>
               <tbody>
@@ -430,6 +469,14 @@ async function AdminBoard({ statusFilter }: { statusFilter?: string }) {
                       )}
                     </td>
                     <td className="px-4 py-2">{r.condition}</td>
+                    <td className="px-4 py-2">
+                      <form action={deleteResource}>
+                        <input type="hidden" name="id" value={r.id} />
+                        <button className="text-gray-400 hover:text-red-600" title="Delete (only if never requested)">
+                          <Trash2 size={15} />
+                        </button>
+                      </form>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -457,13 +504,16 @@ async function AdminBoard({ statusFilter }: { statusFilter?: string }) {
                 <tr><td colSpan={6} className="px-4 py-3 text-gray-500">No resource requests yet.</td></tr>
               )}
               {resourceRequests.map((req) => (
-                <tr key={req.id} className="border-t">
+                <tr key={req.id} className={`border-t ${req.urgent ? "bg-red-50" : ""}`}>
                   <td className="px-4 py-2 text-xs text-gray-400">{req.studentId.slice(0, 8)}…</td>
                   <td className="px-4 py-2">{req.student.name}</td>
-                  <td className="px-4 py-2">{req.resource?.name || `${req.customName} (not in stock)`}</td>
+                  <td className="px-4 py-2">{req.urgent && <UrgentBadge />}{req.resource?.name || `${req.customName} (not in stock)`}</td>
                   <td className="px-4 py-2">{req.quantity}</td>
                   <td className="px-4 py-2"><ReqBadge status={req.status} /></td>
                   <td className="px-4 py-2">
+                    {req.status === "PENDING" && req.resource && req.resource.quantity < req.quantity && (
+                      <span className="text-xs text-red-600 block mb-1">Only {req.resource.quantity} in stock</span>
+                    )}
                     {req.status === "PENDING" && (
                       <form action={reviewResourceRequest} className="flex gap-1">
                         <input type="hidden" name="requestId" value={req.id} />
@@ -494,7 +544,7 @@ async function AdminBoard({ statusFilter }: { statusFilter?: string }) {
 async function StaffView({ staffId }: { staffId: string }) {
   const issues = await prisma.issue.findMany({
     where: { assignedToId: staffId, status: { in: ["ASSIGNED", "IN_PROGRESS"] } },
-    orderBy: { createdAt: "asc" },
+    orderBy: [{ urgent: "desc" }, { createdAt: "asc" }],
     include: { reportedBy: true, comments: { include: { user: true }, orderBy: { createdAt: "asc" } } },
   });
 
@@ -505,10 +555,10 @@ async function StaffView({ staffId }: { staffId: string }) {
       </h2>
       {issues.length === 0 && <p className="text-sm text-gray-500">No issues currently assigned to you.</p>}
       {issues.map((issue) => (
-        <div key={issue.id} className="card">
+        <div key={issue.id} className={`card ${issue.urgent ? "border-red-500 bg-red-50" : ""}`}>
           <div className="flex items-start justify-between gap-2">
             <div>
-              <h3 className="font-medium">{issue.title}</h3>
+              <h3 className="font-medium">{issue.urgent && <UrgentBadge />}{issue.title}</h3>
               <p className="text-sm text-gray-600 mt-1">{issue.description}</p>
               {issue.location && <p className="text-xs text-gray-400 mt-1">📍 {issue.location}</p>}
               <p className="text-xs text-gray-400 mt-1">Reported by {issue.reportedBy.name}</p>
